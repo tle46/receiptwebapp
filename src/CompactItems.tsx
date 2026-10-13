@@ -1,3 +1,4 @@
+import { useConfirmation } from "./ConfirmationDialog";
 import { useRef, useState } from "react";
 import { Check, ChevronDown, Plus, Trash2 } from "lucide-react";
 import { money, type Draft, type Item, type Method } from "./api";
@@ -21,6 +22,7 @@ export default function CompactItems({
   name: (id: number) => string;
   centsEntry: boolean;
 }) {
+  const { confirm } = useConfirmation();
   const [expanded, setExpanded] = useState<number | null>(null);
   const lastMethods = useRef<Record<number, Method>>({});
   function update(index: number, item: Item) {
@@ -37,10 +39,14 @@ export default function CompactItems({
         </h2>
         <button
           className="text-button"
-          onClick={() => {
+          onClick={async () => {
             if (
-              confirm(
+              await confirm(
                 "Replace all item allocations with equal shares for everyone?",
+                {
+                  title: "Reset item shares?",
+                  confirmLabel: "Use equal shares",
+                },
               )
             )
               change({
@@ -148,8 +154,14 @@ export default function CompactItems({
                 className="icon-button"
                 aria-label={`Remove item ${index + 1}`}
                 disabled={draft.items.length === 1}
-                onClick={() => {
-                  if (confirm(`Remove ${item.name || "this item"}?`)) {
+                onClick={async () => {
+                  if (
+                    await confirm(`Remove ${item.name || "this item"}?`, {
+                      title: "Remove item?",
+                      confirmLabel: "Remove item",
+                      danger: true,
+                    })
+                  ) {
                     change({
                       ...draft,
                       items: draft.items.filter((_, i) => i !== index),

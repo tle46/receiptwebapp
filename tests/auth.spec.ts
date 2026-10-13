@@ -107,8 +107,11 @@ test("registration upgrades guest in place, logout revokes session, reload does 
   await page.getByLabel("Display name").fill("Alice");
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  page.on("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Log out", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "Sign out?" })
+    .getByRole("button", { name: "Sign out", exact: true })
+    .click();
   await expect(page.locator(".entry-card")).toBeVisible();
   expect(logout).toBe(true);
   await page.reload();
@@ -527,8 +530,11 @@ test("remembered cookie session restores after reload and logout stops restorati
   expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain(
     "remembered-access",
   );
-  page.on("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Log out", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "Sign out?" })
+    .getByRole("button", { name: "Sign out", exact: true })
+    .click();
   await expect(page.locator(".entry-card")).toBeVisible();
   await page.reload();
   await expect(page.locator(".entry-card")).toBeVisible();

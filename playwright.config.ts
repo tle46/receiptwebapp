@@ -1,6 +1,11 @@
 import { defineConfig } from "@playwright/test";
 export default defineConfig({
-  testMatch: ["auth.spec.ts", "participant.spec.ts", "calculation.spec.ts"],
+  testMatch: [
+    "auth.spec.ts",
+    "participant.spec.ts",
+    "calculation.spec.ts",
+    "confirmation.spec.ts",
+  ],
   use: { channel: "msedge", headless: true },
   timeout: 60000,
   webServer: {

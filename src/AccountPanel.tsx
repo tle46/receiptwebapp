@@ -1,3 +1,4 @@
+import { useConfirmation } from "./ConfirmationDialog";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { auth, ApiError } from "./api";
 import { session } from "./session";
@@ -43,8 +44,9 @@ export default function AccountPanel({
 }: {
   close?: () => void;
   embedded?: boolean;
-  beforeSwitch?: () => void;
+  beforeSwitch?: () => void | Promise<void>;
 }) {
+  const { confirm, notify } = useConfirmation();
   const user = useSyncExternalStore(session.subscribe, session.get);
   const [mode, setMode] = useState<Mode>(
     user?.status === "ACTIVE" ? "profile" : "login",
@@ -131,13 +133,18 @@ export default function AccountPanel({
       {fields[name] && <small className="field-error">{fields[name]}</small>}
     </label>
   );
-  function switching() {
-    beforeSwitch();
+  async function switching() {
+    await beforeSwitch();
     if (
       user?.status === "GUEST" &&
-      !confirm(
+      !(await confirm(
         "Sign in to a separate account? Your guest receipts will not merge. Register instead to preserve this guest account.",
-      )
+        {
+          title: "Switch account?",
+          confirmLabel: "Sign in",
+          cancelLabel: "Keep guest account",
+        },
+      ))
     )
       throw new Error("Sign-in cancelled.");
   }
@@ -155,8 +162,8 @@ export default function AccountPanel({
         throw new Error("Password must be at most 72 UTF-8 bytes.");
     if (mode === "login" || mode === "register") {
       if (mode === "login") data.username = data.username.trim();
-      if (mode === "login") switching();
-      else beforeSwitch();
+      if (mode === "login") await switching();
+      else await beforeSwitch();
       const next = await (mode === "login"
         ? auth.login(data)
         : auth.register(data));
@@ -165,8 +172,9 @@ export default function AccountPanel({
         try {
           await auth.sendVerification();
         } catch {
-          alert(
+          await notify(
             "Account created. Verification email is unavailable; resend from Account settings.",
+            { title: "Account created", confirmLabel: "Got it" },
           );
         }
       }
@@ -189,7 +197,7 @@ export default function AccountPanel({
       setMode("login");
       setNotice("Password reset. Sign in again.");
     } else {
-      beforeSwitch();
+      await beforeSwitch();
       await auth.changePassword(data);
       session.set(null);
       setMode("login");
@@ -328,7 +336,7 @@ export default function AccountPanel({
                 disabled={!clientId}
                 onClick={() =>
                   void run(async () => {
-                    beforeSwitch();
+                    await beforeSwitch();
                     const linkAccount = mode !== "login" && !!session.get();
                     await loadGoogle();
                     const epoch = session.epoch();
@@ -342,7 +350,7 @@ export default function AccountPanel({
                       callback: (result) => {
                         if (!alive.current || epoch !== session.epoch()) return;
                         void run(async () => {
-                          beforeSwitch();
+                          await beforeSwitch();
                           const next = await auth.google(
                             result.credential,
                             nonce,
@@ -432,15 +440,22 @@ export default function AccountPanel({
                   key={String(all)}
                   onClick={() =>
                     void run(async () => {
-                      beforeSwitch();
+                      await beforeSwitch();
                       if (
-                        !confirm(
+                        !(await confirm(
                           user.status === "GUEST"
                             ? "Sign out and lose access to this guest account?"
                             : all
                               ? "Sign out on all devices?"
                               : "Sign out?",
-                        )
+                          {
+                            title: "Sign out?",
+                            confirmLabel: all
+                              ? "Sign out all devices"
+                              : "Sign out",
+                            cancelLabel: "Stay signed in",
+                          },
+                        ))
                       )
                         return;
                       await auth.logout(all);
@@ -455,11 +470,16 @@ export default function AccountPanel({
                 className="delete-button"
                 onClick={() =>
                   void run(async () => {
-                    beforeSwitch();
+                    await beforeSwitch();
                     if (
-                      !confirm(
+                      !(await confirm(
                         "Deactivate your account? Access will be disabled. Shared receipt records remain.",
-                      )
+                        {
+                          title: "Deactivate account?",
+                          confirmLabel: "Deactivate account",
+                          danger: true,
+                        },
+                      ))
                     )
                       return;
                     await auth.deactivate();

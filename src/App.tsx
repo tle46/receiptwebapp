@@ -1,3 +1,4 @@
+import { useConfirmation } from "./ConfirmationDialog";
 import { useEffect, useRef, useState } from "react";
 import SharedReceipt from "./SharedReceipt";
 import CompactItems from "./CompactItems";
@@ -57,6 +58,7 @@ const blank = (id: number): Draft => ({
   adjustmentAllocations: [],
 });
 export default function App({ account }: { account: Account }) {
+  const { confirm, choose, isOpen: confirmationOpen } = useConfirmation();
   const owner = account;
   const [page, setPage] = useState("receipts"),
     [receipts, setReceipts] = useState<Receipt[]>([]),
@@ -156,14 +158,20 @@ export default function App({ account }: { account: Account }) {
   useEffect(() => {
     void refresh();
   }, [owner?.id]);
-  function logout() {
+  async function logout() {
     if (busy || lock.current) return;
     if (
-      !confirm(
+      !(await confirm(
         owner.status === "GUEST"
           ? "Signing out loses access to this guest account. Register first to keep your receipts. Sign out anyway?"
           : "Sign out? Unsaved changes will be discarded.",
-      )
+        {
+          title: "Sign out?",
+          confirmLabel: "Sign out",
+          cancelLabel: "Stay signed in",
+          danger: true,
+        },
+      ))
     )
       return;
     void run(async () => {
@@ -232,6 +240,7 @@ export default function App({ account }: { account: Account }) {
       (active && (active.status !== "DRAFT" || active.ownerId !== owner?.id)) ||
       busy ||
       scanner ||
+      confirmationOpen ||
       lock.current ||
       saveState === "Could not save"
     )
@@ -240,7 +249,7 @@ export default function App({ account }: { account: Account }) {
       void save().catch(() => {});
     }, 1200);
     return () => clearTimeout(timer);
-  }, [draft, dirty, active?.id, busy, saveState, scanner]);
+  }, [draft, dirty, active?.id, busy, saveState, scanner, confirmationOpen]);
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
       if (dirty) {
@@ -251,12 +260,20 @@ export default function App({ account }: { account: Account }) {
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, [dirty]);
-  function leave(next: string) {
+  async function leave(next: string) {
     if (lock.current) {
       setError("Please wait for the draft to finish saving.");
       return;
     }
-    if (dirty && !confirm("Leave this receipt and discard unsaved changes?"))
+    if (
+      dirty &&
+      !(await confirm("Leave this receipt and discard unsaved changes?", {
+        title: "Discard changes?",
+        confirmLabel: "Discard changes",
+        cancelLabel: "Keep editing",
+        danger: true,
+      }))
+    )
       return;
     setDraft(null);
     setActive(null);
@@ -780,10 +797,15 @@ export default function App({ account }: { account: Account }) {
                         <button
                           aria-label={`Remove ${f.displayName}`}
                           disabled={busy}
-                          onClick={() => {
+                          onClick={async () => {
                             if (
-                              confirm(
+                              await confirm(
                                 `Remove ${f.displayName} from your people? Existing receipts will be kept.`,
+                                {
+                                  title: "Remove contact?",
+                                  confirmLabel: "Remove contact",
+                                  danger: true,
+                                },
                               )
                             )
                               void run(async () => {
@@ -914,8 +936,13 @@ export default function App({ account }: { account: Account }) {
                     <>
                       <button
                         disabled={busy}
-                        onClick={() => {
-                          if (confirm("Reopen this receipt for editing?"))
+                        onClick={async () => {
+                          if (
+                            await confirm("Reopen this receipt for editing?", {
+                              title: "Reopen receipt?",
+                              confirmLabel: "Reopen receipt",
+                            })
+                          )
                             void lifecycle("reopen");
                         }}
                       >
@@ -924,10 +951,14 @@ export default function App({ account }: { account: Account }) {
                       <button
                         className="primary"
                         disabled={busy}
-                        onClick={() => {
+                        onClick={async () => {
                           if (
-                            confirm(
+                            await confirm(
                               "Mark this receipt settled? This cannot be undone and does not transfer money.",
+                              {
+                                title: "Mark receipt settled?",
+                                confirmLabel: "Mark settled",
+                              },
                             )
                           )
                             void lifecycle("settle");
@@ -1298,8 +1329,14 @@ export default function App({ account }: { account: Account }) {
                       <button
                         className="delete-button"
                         disabled={busy}
-                        onClick={() => {
-                          if (confirm("Permanently delete this receipt?"))
+                        onClick={async () => {
+                          if (
+                            await confirm("Permanently delete this receipt?", {
+                              title: "Delete receipt?",
+                              confirmLabel: "Delete receipt",
+                              danger: true,
+                            })
+                          )
                             void run(async () => {
                               if (lock.current)
                                 throw new Error(
@@ -1334,10 +1371,18 @@ export default function App({ account }: { account: Account }) {
       {identity && (
         <AccountPanel
           close={() => setIdentity(false)}
-          beforeSwitch={() => {
+          beforeSwitch={async () => {
             if (lock.current)
               throw new Error("Please wait for saving to finish.");
-            if (dirty && !confirm("Discard unsaved changes?"))
+            if (
+              dirty &&
+              !(await confirm("Discard unsaved changes?", {
+                title: "Discard changes?",
+                confirmLabel: "Discard changes",
+                cancelLabel: "Keep editing",
+                danger: true,
+              }))
+            )
               throw new Error("Account change cancelled.");
           }}
         />
@@ -1346,15 +1391,22 @@ export default function App({ account }: { account: Account }) {
         <ReceiptScanner
           currency={draft.currency}
           close={() => setScanner(false)}
-          apply={(result) => {
+          apply={async (result) => {
             const existing = draft.items.filter(
               (i) => i.name.trim() || i.unitPrice > 0,
             );
             const replace =
-              existing.length === 0 ||
-              confirm(
-                "Replace existing items with the scanned receipt? Choose Cancel to append the scanned items.",
-              );
+              existing.length === 0
+                ? true
+                : await choose(
+                    "Replace your existing items or add the scanned items to this receipt?",
+                    {
+                      title: "Add scanned items",
+                      confirmLabel: "Replace items",
+                      cancelLabel: "Add to existing items",
+                    },
+                  );
+            if (replace === null) return;
             const scanned = result.items.map((i) => ({
               name: i.name,
               quantity: i.quantity,
