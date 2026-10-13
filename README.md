@@ -59,9 +59,3 @@ For production:
 4. Run `npm start` and reverse-proxy the entire frontend origin over HTTPS to this server (default `127.0.0.1:3000`). It serves `dist/` and handles `/api`; do not bypass it by proxying auth requests directly to Spring Boot. Production refuses an HTTP public origin and sets Secure cookies.
 
 This SQLite gateway supports one Node process. For multiple gateway instances, replace the store and in-process refresh coordination with a shared store and distributed lock before scaling. [Node SQLite documentation](https://nodejs.org/api/sqlite.html) describes the built-in database API. Configure Google allowed origins, authenticated SMTP, trusted proxies/gateway rate limits, backup/migrations, and backend production schema validation as described in `receipt/docs/`. The backend's per-socket IP abuse limits will see the gateway address unless trusted proxy handling is configured.
-
-Use a Content Security Policy appropriate to hosting, including Google's script/frame/connect origins if enabled and the worker/WebAssembly requirements for OCR. Set HSTS, nosniff and a restrictive referrer policy at the proxy.
-
-The live local Swagger endpoint was unavailable during this integration. Request shapes were checked against supplied Java DTOs/controllers. Creation requires receipt/item totals; bulk draft save does not. Owner participant IDs are excluded from bulk participant lists but retained in item allocations. Zero allocation inputs are omitted as required by backend validation.
-
-Before release, smoke-test a configured staging backend: real Google nonce exchange, SMTP verification/recovery, receipt roundtrips and lifecycle, token revocation, CORS and HTTPS. Mocked browser tests do not verify provider configuration or database behavior. Smoke-test persistent restoration and logout through the deployed gateway.
