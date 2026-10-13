@@ -1,6 +1,17 @@
 import { RefreshCw, Wallet, ArrowDownLeft, ArrowUpRight } from "lucide-react";
 import { cents, money, type Balances } from "./api";
 
+function paymentButton(
+  person: Balances["currencies"][number]["people"][number],
+  currency: string
+) {
+  return cents(person.owedToYou) <= 0n
+    ? "Nothing owed to you"
+    : `Received ${money(person.owedToYou, currency)} from ${
+        person.displayName || person.username
+      }`;
+}
+
 export default function BalancesPage({
   balances,
   loading,
@@ -29,8 +40,7 @@ export default function BalancesPage({
         </button>
       </div>
       <p className="balance-explainer">
-        Only unpaid shares on finalized receipts count here. Each currency is
-        separate. Net amounts are informational; payments are recorded in full.
+        Only unpaid shares on finalized receipts appear here.
       </p>
       {error && (
         <div className="error" role="alert">
@@ -123,7 +133,7 @@ export default function BalancesPage({
                   }
                   onClick={() => settle(person.userId)}
                 >
-                  Mark all received
+                  {paymentButton(person, currency.currency)}
                 </button>
               </article>
             ))}

@@ -9,7 +9,7 @@ export default function PersonFields() {
         <select value={placeholder ? "placeholder" : "account"}
           onChange={(event) => setPlaceholder(event.target.value === "placeholder")}>
           <option value="account">Existing account</option>
-          <option value="placeholder">Name-only person</option>
+          <option value="placeholder">Placeholder</option>
         </select>
       </label>
       {placeholder ? (
@@ -22,7 +22,7 @@ export default function PersonFields() {
           Username or email
           <input name="identifier" required maxLength={254}
             autoCapitalize="none" autoCorrect="off" spellCheck={false}
-            placeholder="sam or sam@example.com" />
+            placeholder="johndoe123 or johndoe@example.com" />
         </label>
       )}
       <small>{placeholder
