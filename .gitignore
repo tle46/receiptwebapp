@@ -1,0 +1,9 @@
+node_modules/
+dist/
+playwright-report/
+test-results/
+.npm-cache/
+
+.session-data/
+.env.local
+.env.production
