@@ -1,5 +1,6 @@
 import { ArrowLeft, RefreshCw, LockKeyhole } from "lucide-react";
 import { money, type Receipt } from "./api";
+import { paymentStatus } from "./ReceiptPayments";
 
 export default function SharedReceipt({
   receipt,
@@ -100,6 +101,11 @@ export default function SharedReceipt({
                 <strong>
                   {money(p.finalOwedAmount || 0, receipt.currency)}
                 </strong>
+                <small
+                  className={`payment-status ${paymentStatus(receipt, p).toLowerCase()}`}
+                >
+                  {paymentStatus(receipt, p)}
+                </small>
               </div>
             ))}
           </section>

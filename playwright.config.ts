@@ -5,6 +5,7 @@ export default defineConfig({
     "participant.spec.ts",
     "calculation.spec.ts",
     "confirmation.spec.ts",
+    "balances.spec.ts",
   ],
   use: { channel: "msedge", headless: true },
   timeout: 60000,

@@ -42,7 +42,14 @@ export type Receipt = Omit<Draft, "items" | "participantUserIds"> & {
   total: number;
   subtotal: number;
   status: "DRAFT" | "FINALIZED" | "SETTLED";
-  participants: { id: number; userId: number; finalOwedAmount: number }[];
+  participants: {
+    id: number;
+    userId: number;
+    username: string;
+    displayName: string;
+    finalOwedAmount: number;
+    settled: boolean;
+  }[];
   items: (Omit<Item, "allocations"> & {
     id: number;
     total: number;
@@ -60,7 +67,9 @@ export type Split = {
     participantId: number;
     userId: number;
     username: string;
+    displayName: string;
     finalOwedAmount: number;
+    settled: boolean;
   }[];
   allocations: {
     itemName: string;
@@ -68,6 +77,61 @@ export type Split = {
     finalAmount: number;
   }[];
 };
+export type PersonBalance = {
+  userId: number;
+  username: string;
+  displayName: string;
+  owedToYou: number;
+  youOwe: number;
+  netBalance: number;
+};
+export type Balances = {
+  userId: number;
+  currencies: {
+    currency: string;
+    totalOwed: number;
+    totalOwing: number;
+    netBalance: number;
+    people: PersonBalance[];
+  }[];
+};
+export type PersonSettlement = {
+  personUserId: number;
+  currencies: {
+    currency: string;
+    settledAmount: number;
+    participantCount: number;
+  }[];
+  affectedReceiptIds: number[];
+};
+// API amounts have two decimals. Convert to integer cents before any comparison
+// or aggregation; never offset values belonging to different currencies.
+export function cents(value: number): bigint {
+  if (!Number.isFinite(value)) throw new Error("Invalid money amount.");
+  const [coefficient, exponent = "0"] = Math.abs(value)
+    .toString()
+    .split(/[eE]/);
+  const [whole, fraction = ""] = coefficient.split(".");
+  const digits = BigInt(whole + fraction);
+  const shift = Number(exponent) + 2 - fraction.length;
+  const divisor = shift < 0 ? 10n ** BigInt(-shift) : 1n;
+  const amount =
+    shift >= 0
+      ? digits * 10n ** BigInt(shift)
+      : (digits + divisor / 2n) / divisor;
+  return value < 0 ? -amount : amount;
+}
+export function hasReceivedPayment(receipt: Receipt) {
+  return (
+    receipt.status === "FINALIZED" &&
+    receipt.participants.some(
+      (participant) =>
+        participant.userId !== receipt.ownerId &&
+        participant.settled &&
+        cents(participant.finalOwedAmount) > 0n,
+    )
+  );
+}
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -192,12 +256,27 @@ export const auth = {
 const receiptPath = (owner: number, id?: number, action = "") =>
   `/receipts${id ? `/${id}` : ""}${action ? `/${action}` : ""}?userId=${owner}`;
 export const remoteApi = {
+  balances: (actor: number) => request<Balances>(`/users/${actor}/balances`),
+  settlePerson: (actor: number, person: number) =>
+    request<PersonSettlement>(
+      `/users/${actor}/balances/people/${person}/settle`,
+      "POST",
+    ),
+  settleParticipant: (actor: number, receipt: number, participant: number) =>
+    request<Receipt>(
+      receiptPath(actor, receipt, `participants/${participant}/settle`),
+      "POST",
+    ),
   friends: (id: number) => request<Friend[]>(`/users/${id}/friends`),
-  addFriend: (id: number, displayName: string, email?: string) =>
-    request<Friend>(`/users/${id}/friends`, "POST", {
-      displayName,
-      ...(email ? { email } : {}),
-    }),
+  addFriend: (id: number, identifier: string, displayName = "") => {
+    const value = identifier.trim();
+    const name = displayName.trim();
+    if (!value && !name) throw new Error("Enter a username, email, or name.");
+    return request<Friend>(`/users/${id}/friends`, "POST",
+      value ? (value.includes("@") ? { email: value } : { username: value })
+        : { displayName: name },
+    );
+  },
   removeFriend: (id: number, friend: number) =>
     request<void>(`/users/${id}/friends/${friend}`, "DELETE"),
   list: (owner: number) => request<Receipt[]>(receiptPath(owner)),
@@ -270,6 +349,8 @@ export const money = (value: number, currency = "USD") => {
     return new Intl.NumberFormat("en-US", {
       style: "currency",
       currency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
     }).format(value);
   } catch {
     return `${currency} ${value.toFixed(2)}`;

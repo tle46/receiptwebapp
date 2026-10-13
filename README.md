@@ -27,6 +27,18 @@ Run `npm run test:server` for cookie flags, CSRF rejection, encrypted storage, p
 
 Google requires `VITE_GOOGLE_CLIENT_ID` matching the backend's `GOOGLE_CLIENT_ID`. The frontend requests a server nonce and passes it to Google Identity Services and the exchange endpoint. SMTP and Google failures display provider-unavailable errors. Recovery requires a verified email for password accounts.
 
+## Balances and recorded payments
+
+Balances is available in the sidebar. `GET /api/users/{authenticatedUserId}/balances` supplies currency-specific gross incoming debt, outgoing debt, and informational net amounts. People are named from the balance response, including people who are no longer contacts. Amounts from different currencies are never added or offset; money comparisons use integer cents. An empty currency list shows a no-outstanding-balances state. Zero net with gross debt in both directions is explicitly labeled as outstanding.
+
+Mark all received confirms all incoming amounts for the person across all currencies and calls `POST /api/users/{authenticatedUserId}/balances/people/{personUserId}/settle`. It never clears money the current user owes that person and never transfers funds. The response is used for a receipt/count summary; balances and receipt lists are refetched, and any affected open receipt is reloaded. Duplicate submissions are locked. Empty settlement results are successful and refresh the page.
+
+Owner receipt details show original participant shares alongside Draft, Paid, or Unpaid status. Mark received calls the participant settlement endpoint using the receipt participant record ID, not the user ID. The full response updates the receipt immediately, including automatic SETTLED status when the last outstanding share is paid. Paid amounts remain visible at their original value. Participants see payment status read-only. Owners can still mark all participants received with the existing receipt settlement action.
+
+A finalized receipt with any paid non-owner positive share cannot be reopened or deleted. Those controls are hidden, and the handlers guard the restriction. Owners can reverse all receipt payments using `POST /api/receipts/{receiptId}/unsettle?userId={currentUserId}` with no body. The full response determines status and payment flags; owner and zero shares remain settled. Receipt lists and balances refresh after reversal. Drafts create no balances and cannot record or reverse payments.
+
+The local Swagger schema inspected on October 12, 2026 still lacked balances, participant settlement, and participant `settled` fields. This integration follows the pasted **Balances and settlement frontend handoff**. Run the updated backend before using these features live; the older running backend returns unavailable/not-found errors. Browser tests mock the new contract and do not establish that the updated backend has been deployed.
+
 ## Receipt workflow
 
 Owner drafts support participants, independent equal/exact/percentage/shares item splits, and exact tax/fee/tip overrides. Full draft saves preserve these allocations atomically. Existing drafts autosave after 1.2 seconds; new receipts require Save or Review. Saves serialize, and failed saves remain retryable. Estimates are labeled; server calculation supplies review and final balances.

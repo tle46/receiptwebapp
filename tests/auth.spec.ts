@@ -129,7 +129,7 @@ test("backend guest saves complete draft with actor and reloads server balances"
     merchantName: saved?.merchantName || "Dinner",
     purchaseDate: "2026-10-06T18:00:00",
     currency: "USD",
-    status: finalized ? "FINALIZED" : "DRAFT",
+    status: finalized ? "SETTLED" : "DRAFT",
     discount: 0,
     tax: 0,
     fee: 0,
@@ -137,7 +137,9 @@ test("backend guest saves complete draft with actor and reloads server balances"
     total: 10,
     subtotal: 10,
     adjustmentAllocations: saved?.adjustmentAllocations || [],
-    participants: [{ id: 71, userId: 7, finalOwedAmount: 10 }],
+    participants: [
+      { id: 71, userId: 7, finalOwedAmount: 10, settled: finalized },
+    ],
     items: [
       {
         id: 51,
@@ -165,6 +167,8 @@ test("backend guest saves complete draft with actor and reloads server balances"
       return route.fulfill({ status: 201, json: credentials() });
     expect(request.headers().authorization).toBe("Bearer access1");
     if (url.pathname.endsWith("/friends")) return route.fulfill({ json: [] });
+    if (url.pathname === "/api/users/7/balances")
+      return route.fulfill({ json: { userId: 7, currencies: [] } });
     expect(url.searchParams.get("userId")).toBe("7");
     if (url.pathname.endsWith("/finalize")) {
       finalized = true;
@@ -211,7 +215,10 @@ test("backend guest saves complete draft with actor and reloads server balances"
   await page.getByRole("button", { name: /Finalize receipt/i }).click();
   await expect(
     page.getByRole("button", { name: "Reopen", exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
+  await expect(
+    page.locator(".receipt-payments .payment-status.paid"),
+  ).toHaveCount(1);
   await expect(
     page.getByText("Review your split", { exact: true }),
   ).toHaveCount(0);

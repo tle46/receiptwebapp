@@ -1,6 +1,9 @@
 import { useConfirmation } from "./ConfirmationDialog";
 import { useEffect, useRef, useState } from "react";
 import SharedReceipt from "./SharedReceipt";
+import BalancesPage from "./BalancesPage";
+import ReceiptPayments from "./ReceiptPayments";
+import PersonFields from "./PersonFields";
 import CompactItems from "./CompactItems";
 import AmountInput from "./AmountInput";
 import ReceiptScanner from "./ReceiptScanner";
@@ -24,6 +27,7 @@ import {
   UserRound,
   LogOut,
   FolderOpen,
+  Wallet,
 } from "lucide-react";
 import {
   api,
@@ -31,6 +35,9 @@ import {
   ApiError,
   money,
   toDraft,
+  cents,
+  hasReceivedPayment,
+  type Balances,
   type Friend,
   type Receipt,
   type Draft,
@@ -79,6 +86,12 @@ export default function App({ account }: { account: Account }) {
       () => localStorage.getItem("gather.cents") !== "false",
     ),
     [addPerson, setAddPerson] = useState(false);
+  const [balances, setBalances] = useState<Balances | null>(null);
+  const [balanceLoading, setBalanceLoading] = useState(false);
+  const [balanceError, setBalanceError] = useState("");
+  const [notice, setNotice] = useState("");
+  const balanceRequest = useRef(0),
+    paymentLock = useRef(false);
   const session = useRef(0);
   const listRequest = useRef(0);
   const revision = useRef(0),
@@ -114,10 +127,16 @@ export default function App({ account }: { account: Account }) {
       previous?.focus();
     };
   }, [identity]);
-  const name = (id: number) =>
-    id === owner?.id
-      ? `${owner.displayName || owner.username} (you)`
-      : friends.find((f) => f.userId === id)?.displayName || `Person #${id}`;
+  const name = (id: number) => {
+    if (id === owner.id)
+      return `${owner.displayName || owner.username} (you)`;
+    const participant = active?.participants.find((p) => p.userId === id)
+      || receipts.flatMap((r) => r.participants).find(
+        (p) => p.userId === id && (p.displayName || p.username),
+      );
+    return participant?.displayName || participant?.username
+      || friends.find((f) => f.userId === id)?.displayName || `Person #${id}`;
+  };
   function fail(e: unknown) {
     setError(e instanceof Error ? e.message : "Something went wrong.");
     setFields(e instanceof ApiError ? e.fields : {});
@@ -158,6 +177,161 @@ export default function App({ account }: { account: Account }) {
   useEffect(() => {
     void refresh();
   }, [owner?.id]);
+  async function refreshBalances() {
+    const request = ++balanceRequest.current;
+    setBalanceLoading(true);
+    setBalanceError("");
+    try {
+      const result = await api.balances(owner.id);
+      if (!Array.isArray(result.currencies))
+        throw new Error("Unexpected balances response. Please try again.");
+      if (request === balanceRequest.current) setBalances(result);
+    } catch (error) {
+      if (request === balanceRequest.current)
+        setBalanceError(
+          error instanceof Error ? error.message : "Could not load balances.",
+        );
+    } finally {
+      if (request === balanceRequest.current) setBalanceLoading(false);
+    }
+  }
+  useEffect(() => {
+    if (page === "balances") void refreshBalances();
+  }, [page, owner.id]);
+  async function refreshAfterPayment(affected: number[]) {
+    setBalances(null);
+    await Promise.all([refresh(), refreshBalances()]);
+    if (active && affected.includes(active.id)) {
+      try {
+        const detail = await api.get(owner.id, active.id);
+        setActive(detail);
+        setDraft(toDraft(detail));
+        setDirty(false);
+      } catch (error) {
+        if (
+          error instanceof ApiError &&
+          (error.status === 403 || error.status === 404)
+        ) {
+          setActive(null);
+          setDraft(null);
+          setDirty(false);
+          setPage("receipts");
+        }
+        throw error;
+      }
+    }
+  }
+  async function settlePerson(personId: number) {
+    if (busy || balanceLoading || paymentLock.current || !balances) return;
+    const incoming = balances.currencies.flatMap((block) =>
+      block.people
+        .filter(
+          (person) =>
+            person.userId === personId && cents(person.owedToYou) > 0n,
+        )
+        .map((person) => ({
+          currency: block.currency,
+          amount: person.owedToYou,
+          name: person.displayName || person.username,
+        })),
+    );
+    if (!incoming.length || personId === owner.id) return;
+    paymentLock.current = true;
+    try {
+      if (
+        !(await confirm(
+          `Record all payments received from ${incoming[0].name}?\n\n${incoming.map((amount) => `${amount.currency}: ${money(amount.amount, amount.currency)}`).join("\n")}\n\nThis records the full incoming amounts across all currencies and finalized receipts. Any money you owe this person remains outstanding. No funds are transferred.`,
+          { title: "Mark all received?", confirmLabel: "Mark all received" },
+        ))
+      )
+        return;
+      await run(async () => {
+        const result = await api.settlePerson(owner.id, personId);
+        const count = result.currencies.reduce(
+          (total, block) => total + block.participantCount,
+          0,
+        );
+        setNotice(
+          result.affectedReceiptIds.length
+            ? `Recorded ${result.currencies.map((block) => `${block.currency} ${money(block.settledAmount, block.currency)}`).join(", ")} received across ${result.affectedReceiptIds.length} receipt(s), ${count} participant share(s).`
+            : "No outstanding incoming payments remained. Balances refreshed.",
+        );
+        await refreshAfterPayment(result.affectedReceiptIds);
+      });
+    } finally {
+      paymentLock.current = false;
+    }
+  }
+  async function settleParticipant(participantId: number) {
+    if (
+      busy ||
+      paymentLock.current ||
+      !active ||
+      active.ownerId !== owner.id ||
+      active.status !== "FINALIZED"
+    )
+      return;
+    const participant = active.participants.find(
+      (person) => person.id === participantId,
+    );
+    if (
+      !participant ||
+      participant.settled ||
+      participant.userId === owner.id ||
+      cents(participant.finalOwedAmount) <= 0n
+    )
+      return;
+    paymentLock.current = true;
+    try {
+      if (
+        !(await confirm(
+          `Record ${money(participant.finalOwedAmount, active.currency)} received from ${name(participant.userId)} for this receipt? This does not transfer money.`,
+          { title: "Mark payment received?", confirmLabel: "Mark received" },
+        ))
+      )
+        return;
+      await run(async () => {
+        const result = await api.settleParticipant(
+          owner.id,
+          active.id,
+          participant.id,
+        );
+        setActive(result);
+        setDraft(toDraft(result));
+        setDirty(false);
+        setNotice(
+          `Payment from ${name(participant.userId)} recorded. Original shares are unchanged.`,
+        );
+        // Full response is authoritative; lists and outstanding balances are refetched.
+        setBalances(null);
+        await Promise.all([refresh(), refreshBalances()]);
+      });
+    } finally {
+      paymentLock.current = false;
+    }
+  }
+  async function unsettleReceipt() {
+    if (busy || paymentLock.current || !active || active.ownerId !== owner.id
+      || active.status === "DRAFT") return;
+    paymentLock.current = true;
+    try {
+      if (!(await confirm(
+        "Reverse all recorded payments on this receipt? Positive shares owed by other participants will become outstanding again. Your own share and zero shares remain settled. No funds are transferred.",
+        { title: "Unsettle receipt?", confirmLabel: "Unsettle receipt", danger: true },
+      ))) return;
+      await run(async () => {
+        const result = await api.action<Receipt>(owner.id, active.id, "unsettle");
+        setActive(result);
+        setDraft(toDraft(result));
+        setDirty(false);
+        setNotice("Recorded payments reversed. Receipt and balances updated.");
+        setBalances(null);
+        await Promise.all([refresh(), refreshBalances()]);
+      });
+    } finally {
+      paymentLock.current = false;
+    }
+  }
   async function logout() {
     if (busy || lock.current) return;
     if (
@@ -279,6 +453,7 @@ export default function App({ account }: { account: Account }) {
     setActive(null);
     setDirty(false);
     setPage(next);
+    setNotice("");
     if (next === "shared" && filter === "DRAFT") setFilter("ALL");
     setError("");
     void refresh();
@@ -314,6 +489,8 @@ export default function App({ account }: { account: Account }) {
         throw new Error("Only the receipt owner can change its status.");
       if (lock.current)
         throw new Error("Please wait for saving to finish, then try again.");
+      if (active && action === "reopen" && hasReceivedPayment(active))
+        throw new Error("Receipts with received payments cannot be reopened.");
       let r = active;
       if (action === "finalize") {
         const validation = draft && validateDraft(draft);
@@ -328,6 +505,8 @@ export default function App({ account }: { account: Account }) {
       setActive(detail);
       setDraft(toDraft(detail));
       setDirty(false);
+      setBalances(null);
+      await Promise.all([refresh(), refreshBalances()]);
     });
   }
   const livePreview = draft ? receiptPreview(draft) : null;
@@ -423,7 +602,11 @@ export default function App({ account }: { account: Account }) {
         <nav aria-label="Main navigation">
           <button
             aria-label="My receipts"
-            className={page !== "people" && !sharedSection ? "selected" : ""}
+            className={
+              page !== "people" && page !== "balances" && !sharedSection
+                ? "selected"
+                : ""
+            }
             onClick={() => leave("receipts")}
           >
             <FileText size={19} />
@@ -437,6 +620,13 @@ export default function App({ account }: { account: Account }) {
             <FolderOpen size={19} />
             Shared with me
             <span className="nav-count">{sharedReceipts.length}</span>
+          </button>
+          <button
+            className={page === "balances" ? "selected" : ""}
+            onClick={() => leave("balances")}
+          >
+            <Wallet size={19} />
+            Balances
           </button>
           <div className="nav-divider" />
           <button
@@ -455,13 +645,15 @@ export default function App({ account }: { account: Account }) {
         <header className="topbar">
           <span>
             Workspace <ChevronRight size={14} />{" "}
-            {page === "people"
-              ? "People"
-              : page === "editor"
-                ? "Receipt details"
-                : page === "shared"
-                  ? "Shared with me"
-                  : "My receipts"}
+            {page === "balances"
+              ? "Balances"
+              : page === "people"
+                ? "People"
+                : page === "editor"
+                  ? "Receipt details"
+                  : page === "shared"
+                    ? "Shared with me"
+                    : "My receipts"}
           </span>
           <div className="account-controls">
             <button
@@ -539,6 +731,27 @@ export default function App({ account }: { account: Account }) {
                 <X size={18} />
               </button>
             </div>
+          )}
+          {notice && (
+            <div className="payment-notice" role="status">
+              {notice}
+              <button
+                aria-label="Dismiss payment notice"
+                onClick={() => setNotice("")}
+              >
+                <X size={16} />
+              </button>
+            </div>
+          )}
+          {page === "balances" && (
+            <BalancesPage
+              balances={balances}
+              loading={balanceLoading}
+              error={balanceError}
+              busy={busy}
+              refresh={() => void refreshBalances()}
+              settle={(person) => void settlePerson(person)}
+            />
           )}
           {(page === "receipts" || page === "shared") && (
             <>
@@ -824,8 +1037,8 @@ export default function App({ account }: { account: Account }) {
                       <Users size={36} />
                       <h3>No contacts yet</h3>
                       <p>
-                        Add someone by name, or use their email to find an
-                        existing account.
+                        Find an existing account by username or email, or add a
+                        name-only person.
                       </p>
                     </div>
                   )}
@@ -839,8 +1052,8 @@ export default function App({ account }: { account: Account }) {
                     void run(async () => {
                       await api.addFriend(
                         owner!.id,
-                        String(data.get("name")),
-                        String(data.get("email")),
+                        String(data.get("identifier") || ""),
+                        String(data.get("displayName") || ""),
                       );
                       form.reset();
                       await refresh();
@@ -849,27 +1062,7 @@ export default function App({ account }: { account: Account }) {
                 >
                   <h2>Add a person</h2>
                   <p>They’ll be available on your next receipt.</p>
-                  <label>
-                    Name
-                    <input
-                      name="name"
-                      required
-                      maxLength={100}
-                      placeholder="e.g. Jamie Chen"
-                    />
-                  </label>
-                  <label>
-                    Email <small>(optional)</small>
-                    <input
-                      name="email"
-                      type="email"
-                      placeholder="jamie@example.com"
-                    />
-                  </label>
-                  <small>
-                    Email contacts are saved locally in the backend. No
-                    invitation email is sent by this interface.
-                  </small>
+                  <PersonFields />
                   <button className="primary" disabled={!owner || busy}>
                     <Plus size={16} />
                     Add person
@@ -911,7 +1104,11 @@ export default function App({ account }: { account: Account }) {
                 <div className="actions">
                   {!readOnly && (
                     <>
-                      <button className="secondary" disabled={busy} onClick={() => setScanner(true)}>
+                      <button
+                        className="secondary"
+                        disabled={busy}
+                        onClick={() => setScanner(true)}
+                      >
                         Scan receipt
                       </button>
                       <button
@@ -936,27 +1133,32 @@ export default function App({ account }: { account: Account }) {
                   )}
                   {active?.status === "FINALIZED" && !participantView && (
                     <>
-                      <button
-                        disabled={busy}
-                        onClick={async () => {
-                          if (
-                            await confirm("Reopen this receipt for editing?", {
-                              title: "Reopen receipt?",
-                              confirmLabel: "Reopen receipt",
-                            })
-                          )
-                            void lifecycle("reopen");
-                        }}
-                      >
-                        Reopen
-                      </button>
+                      {!hasReceivedPayment(active) && (
+                        <button
+                          disabled={busy}
+                          onClick={async () => {
+                            if (
+                              await confirm(
+                                "Reopen this receipt for editing?",
+                                {
+                                  title: "Reopen receipt?",
+                                  confirmLabel: "Reopen receipt",
+                                },
+                              )
+                            )
+                              void lifecycle("reopen");
+                          }}
+                        >
+                          Reopen
+                        </button>
+                      )}
                       <button
                         className="primary"
                         disabled={busy}
                         onClick={async () => {
                           if (
                             await confirm(
-                              "Mark this receipt settled? This cannot be undone and does not transfer money.",
+                              "Mark this receipt settled? This records all payments received and does not transfer money.",
                               {
                                 title: "Mark receipt settled?",
                                 confirmLabel: "Mark settled",
@@ -970,6 +1172,12 @@ export default function App({ account }: { account: Account }) {
                       </button>
                     </>
                   )}
+                  {active && !participantView &&
+                    (active.status === "SETTLED" || hasReceivedPayment(active)) && (
+                      <button disabled={busy} onClick={() => void unsettleReceipt()}>
+                        Unsettle receipt
+                      </button>
+                    )}
                 </div>
               </div>
               <div className="entry-settings">
@@ -1052,9 +1260,8 @@ export default function App({ account }: { account: Account }) {
                             void run(async () => {
                               const f = await api.addFriend(
                                 owner!.id,
-                                String(data.get("displayName")).trim(),
-                                String(data.get("contactEmail")).trim() ||
-                                  undefined,
+                                String(data.get("identifier") || ""),
+                                String(data.get("displayName") || ""),
                               );
                               setFriends((old) => [...old, f]);
                               change({
@@ -1070,30 +1277,10 @@ export default function App({ account }: { account: Account }) {
                             });
                           }}
                         >
-                          <label>
-                            Name
-                            <input
-                              name="displayName"
-                              required
-                              maxLength={100}
-                              placeholder="e.g. Jamie"
-                            />
-                          </label>
-                          <label>
-                            Email (optional)
-                            <input
-                              name="contactEmail"
-                              type="email"
-                              placeholder="Leave blank for a placeholder"
-                            />
-                          </label>
+                          <PersonFields />
                           <button className="primary" disabled={busy}>
                             Add to receipt
                           </button>
-                          <small>
-                            A name is enough for a placeholder. An email can
-                            link an existing account when saved to the backend.
-                          </small>
                         </form>
                       )}
                       <div className="chips">
@@ -1269,6 +1456,22 @@ export default function App({ account }: { account: Account }) {
                   </fieldset>
                 </div>
                 <aside className="summary-column">
+                  {active && (
+                    <ReceiptPayments
+                      receipt={active}
+                      name={name}
+                      busy={busy}
+                      settle={(participantId) =>
+                        void settleParticipant(participantId)
+                      }
+                    />
+                  )}
+                  {active && hasReceivedPayment(active) && (
+                    <p className="payment-lock-note">
+                      Payments have been received. Unsettle this receipt before
+                      reopening or deleting it.
+                    </p>
+                  )}
                   {(!readOnly ||
                     (participantView && active?.status === "DRAFT")) &&
                     livePreview && (
@@ -1327,7 +1530,8 @@ export default function App({ account }: { account: Account }) {
                   </section>
                   {active &&
                     active.status !== "SETTLED" &&
-                    !participantView && (
+                    !participantView &&
+                    !hasReceivedPayment(active) && (
                       <button
                         className="delete-button"
                         disabled={busy}
@@ -1343,6 +1547,10 @@ export default function App({ account }: { account: Account }) {
                               if (lock.current)
                                 throw new Error(
                                   "Please wait for saving to finish.",
+                                );
+                              if (hasReceivedPayment(active))
+                                throw new Error(
+                                  "Receipts with received payments cannot be deleted.",
                                 );
                               await api.delete(owner!.id, active.id);
                               setDirty(false);
@@ -1437,3 +1645,4 @@ export default function App({ account }: { account: Account }) {
     </div>
   );
 }
+
