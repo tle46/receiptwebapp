@@ -555,6 +555,7 @@ export default function App({ account }: { account: Account }) {
                 </div>
                 <div className="actions">
                   <button
+                    className="secondary"
                     disabled={busy}
                     onClick={() => {
                       setDraft(blank(owner!.id));
@@ -910,10 +911,11 @@ export default function App({ account }: { account: Account }) {
                 <div className="actions">
                   {!readOnly && (
                     <>
-                      <button disabled={busy} onClick={() => setScanner(true)}>
+                      <button className="secondary" disabled={busy} onClick={() => setScanner(true)}>
                         Scan receipt
                       </button>
                       <button
+                        className="secondary"
                         disabled={busy}
                         onClick={() =>
                           void run(async () => {

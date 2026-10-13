@@ -289,7 +289,7 @@ export default function CompactItems({
         );
       })}
       <button
-        className="add-item"
+        className="add-item secondary"
         onClick={() =>
           change({
             ...draft,
