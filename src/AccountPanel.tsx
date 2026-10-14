@@ -262,8 +262,7 @@ export default function AccountPanel({
         </h1>
         {user?.status === "GUEST" && (
           <p>
-            Register to keep access to your receipts if your guest session
-            expires or this browser’s cookies are cleared.
+            Register to keep access to your receipts across browsers.
           </p>
         )}
         {error && (

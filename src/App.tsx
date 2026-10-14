@@ -705,8 +705,7 @@ export default function App({ account }: { account: Account }) {
           {owner.status === "GUEST" && (
             <div className="guest-banner">
               <span>
-                Register to keep access to your receipts if this browser session
-                expires or is cleared.
+                Register to keep access to your receipts across browsers.
               </span>
               <button
                 onClick={() => {
