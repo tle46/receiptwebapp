@@ -6,7 +6,6 @@ test.beforeEach(async ({ page }) => {
   });
   await page.route("**/api/**", (route) => {
     const path = new URL(route.request().url()).pathname;
-    if (path === "/api/session") return route.fulfill({ status: 204 });
     if (path === "/api/auth/guest")
       return route.fulfill({
         status: 201,

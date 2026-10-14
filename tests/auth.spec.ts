@@ -24,8 +24,6 @@ test("concurrent 401 responses serialize refresh and retry with the authenticate
 }) => {
   let refreshes = 0;
   await page.route("**/api/**", async (route) => {
-    if (new URL(route.request().url()).pathname === "/api/session")
-      return route.fulfill({ status: 204 });
     const request = route.request(),
       url = new URL(request.url());
     if (url.pathname === "/api/auth/guest")
@@ -62,8 +60,6 @@ test("registration upgrades guest in place, logout revokes session, reload does 
   let guests = 0,
     logout = false;
   await page.route("**/api/**", (route) => {
-    if (new URL(route.request().url()).pathname === "/api/session")
-      return route.fulfill({ status: 204 });
     const request = route.request(),
       url = new URL(request.url());
     if (url.pathname === "/api/auth/guest") {
@@ -159,8 +155,6 @@ test("backend guest saves complete draft with actor and reloads server balances"
     ],
   });
   await page.route("**/api/**", (route) => {
-    if (new URL(route.request().url()).pathname === "/api/session")
-      return route.fulfill({ status: 204 });
     const request = route.request(),
       url = new URL(request.url());
     if (url.pathname === "/api/auth/guest")
@@ -232,8 +226,6 @@ test("email login, display name, default cents and readable mobile layout", asyn
     localStorage.setItem("gather.session-used", "true"),
   );
   await page.route("**/api/**", (route) => {
-    if (new URL(route.request().url()).pathname === "/api/session")
-      return route.fulfill({ status: 204 });
     const url = new URL(route.request().url());
     if (url.pathname === "/api/auth/login") {
       expect(route.request().postDataJSON()).toEqual({
@@ -341,8 +333,6 @@ test("zero allocation stays selected through autosave and can be retyped", async
     ],
   });
   await page.route("**/api/**", (route) => {
-    if (new URL(route.request().url()).pathname === "/api/session")
-      return route.fulfill({ status: 204 });
     const url = new URL(route.request().url());
     if (url.pathname === "/api/auth/guest")
       return route.fulfill({ status: 201, json: credentials() });
@@ -395,8 +385,6 @@ test("Google sign-in omits guest bearer while explicit linking authenticates bot
 }) => {
   const calls: { path: string; authorization: string | undefined }[] = [];
   await page.route("**/api/**", (route) => {
-    if (new URL(route.request().url()).pathname === "/api/session")
-      return route.fulfill({ status: 204 });
     const request = route.request(),
       path = new URL(request.url()).pathname;
     if (path === "/api/auth/guest")
@@ -437,14 +425,12 @@ test("entry page emphasizes guest access and separates account recovery", async 
     localStorage.setItem("gather.session-used", "true"),
   );
   await page.route("**/api/**", (route) =>
-    new URL(route.request().url()).pathname === "/api/session"
-      ? route.fulfill({ status: 204 })
-      : route.fulfill({
-          json:
-            new URL(route.request().url()).pathname === "/api/auth/guest"
-              ? credentials()
-              : [],
-        }),
+    route.fulfill({
+      json:
+        new URL(route.request().url()).pathname === "/api/auth/guest"
+          ? credentials()
+          : [],
+    }),
   );
   await page.goto("http://localhost:5173");
   await expect(
@@ -487,40 +473,34 @@ test("entry page emphasizes guest access and separates account recovery", async 
   ).toBeVisible();
 });
 
-test("remembered cookie session restores after reload and logout stops restoration", async ({
+test("persistent session restores after reload and logout stops restoration", async ({
   page,
 }) => {
-  let available = true,
-    restores = 0,
-    refreshes = 0,
+  let refreshes = 0,
     guests = 0;
   const remembered = () => ({
-    ...credentials("remembered-access", "", {
+    ...credentials("remembered-access", "remembered-refresh", {
       ...user,
       status: "ACTIVE",
       displayName: "Remembered Alice",
     }),
-    browserSession: true,
   });
-  await page.route("**/api/**", (route) => {
+  await page.context().route("**/api/**", (route) => {
     const request = route.request(),
       path = new URL(request.url()).pathname;
-    if (path === "/api/session") {
-      restores++;
-      expect(request.headers().authorization).toBeUndefined();
-      return available
-        ? route.fulfill({ json: { ...remembered(), expiresIn: 0 } })
-        : route.fulfill({ status: 204 });
-    }
     if (path === "/api/auth/refresh") {
       refreshes++;
       expect(request.headers().authorization).toBeUndefined();
-      expect(request.postData()).toBeNull();
+      expect(request.postDataJSON()).toEqual({
+        refreshToken: "remembered-refresh",
+      });
       return route.fulfill({ json: remembered() });
     }
-    if (path === "/api/auth/guest") guests++;
+    if (path === "/api/auth/guest") {
+      guests++;
+      return route.fulfill({ json: remembered() });
+    }
     if (path === "/api/auth/logout") {
-      available = false;
       return route.fulfill({ status: 204 });
     }
     expect(request.headers().authorization).toBe("Bearer remembered-access");
@@ -528,12 +508,16 @@ test("remembered cookie session restores after reload and logout stops restorati
   });
   await page.goto("http://localhost:5173");
   await expect(page.locator(".top-profile")).toContainText("Remembered Alice");
-  await expect.poll(() => refreshes).toBe(1);
   await page.reload();
   await expect(page.locator(".top-profile")).toContainText("Remembered Alice");
+  await expect.poll(() => refreshes).toBe(1);
+  const reopened = await page.context().newPage();
+  await reopened.goto("http://localhost:5173");
+  await expect(reopened.locator(".top-profile")).toContainText(
+    "Remembered Alice",
+  );
   await expect.poll(() => refreshes).toBe(2);
-  expect(restores).toBe(2);
-  expect(guests).toBe(0);
+  expect(guests).toBe(1);
   expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain(
     "remembered-access",
   );
@@ -543,7 +527,38 @@ test("remembered cookie session restores after reload and logout stops restorati
     .getByRole("button", { name: "Sign out", exact: true })
     .click();
   await expect(page.locator(".entry-card")).toBeVisible();
+  await expect(reopened.locator(".entry-card")).toBeVisible();
   await page.reload();
   await expect(page.locator(".entry-card")).toBeVisible();
-  expect(guests).toBe(0);
+  expect(guests).toBe(1);
+  expect(
+    await page.evaluate(() => localStorage.getItem("gather.refresh-token")),
+  ).toBeNull();
+});
+
+test("revoked stored refresh returns to sign-in without replacing guest", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("gather.session-used", "true");
+    localStorage.setItem("gather.refresh-token", "revoked-refresh");
+  });
+  await page.route("**/api/**", (route) => {
+    expect(new URL(route.request().url()).pathname).toBe("/api/auth/refresh");
+    expect(route.request().postDataJSON()).toEqual({
+      refreshToken: "revoked-refresh",
+    });
+    return route.fulfill({ status: 401, json: { message: "Expired" } });
+  });
+  await page.goto("http://localhost:5173");
+  await expect(page.locator(".entry-card")).toBeVisible();
+  await expect(
+    page.getByRole("button", {
+      name: "Continue without an account",
+      exact: true,
+    }),
+  ).toBeEnabled();
+  expect(
+    await page.evaluate(() => localStorage.getItem("gather.refresh-token")),
+  ).toBeNull();
 });

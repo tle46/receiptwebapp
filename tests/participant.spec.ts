@@ -48,8 +48,6 @@ test("owned and shared lists are separate; participant sees saved amounts and ac
     revoked = false;
   const userIds: string[] = [];
   await page.route("**/api/**", (route) => {
-    if (new URL(route.request().url()).pathname === "/api/session")
-      return route.fulfill({ status: 204 });
     const url = new URL(route.request().url());
     if (url.pathname === "/api/auth/guest")
       return route.fulfill({

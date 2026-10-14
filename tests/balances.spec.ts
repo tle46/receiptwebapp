@@ -49,7 +49,9 @@ const initialBalances = {
   ],
 };
 
-test("people lookup accepts username or email and receipt additions leave items unselected", async ({ page }) => {
+test("people lookup accepts username or email and receipt additions leave items unselected", async ({
+  page,
+}) => {
   const people: Friend[] = [];
   const bodies: unknown[] = [];
   await signedIn(page, (path, method, route) => {
@@ -58,10 +60,17 @@ test("people lookup accepts username or email and receipt additions leave items 
         const body = route.request().postDataJSON();
         bodies.push(body);
         if (body.username === "missing")
-          return route.fulfill({ status: 404, json: { message: "Account not found." } });
-        const added = { id: people.length + 1, userId: people.length + 2,
+          return route.fulfill({
+            status: 404,
+            json: { message: "Account not found." },
+          });
+        const added = {
+          id: people.length + 1,
+          userId: people.length + 2,
           displayName: body.displayName || (body.username ? "Sam" : "Jamie"),
-          email: body.email || null, status: body.displayName ? "PLACEHOLDER" : "ACTIVE" };
+          email: body.email || null,
+          status: body.displayName ? "PLACEHOLDER" : "ACTIVE",
+        };
         people.push(added);
         return route.fulfill({ status: 201, json: added });
       }
@@ -70,14 +79,18 @@ test("people lookup accepts username or email and receipt additions leave items 
     return route.fulfill({ json: [] });
   });
   await page.getByRole("button", { name: "People", exact: true }).click();
-  const form = page.locator("form").filter({ has: page.getByRole("heading", { name: "Add a person" }) });
+  const form = page
+    .locator("form")
+    .filter({ has: page.getByRole("heading", { name: "Add a person" }) });
   await form.getByLabel("Username or email").fill("missing");
   await form.getByRole("button", { name: "Add person", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("Account not found.");
   expect(people).toHaveLength(0);
   await form.getByLabel("Username or email").fill("  sam  ");
   await form.getByRole("button", { name: "Add person", exact: true }).click();
-  await expect(page.locator(".panel").filter({ hasText: "Your people" })).toContainText("Sam");
+  await expect(
+    page.locator(".panel").filter({ hasText: "Your people" }),
+  ).toContainText("Sam");
   await form.getByLabel("Username or email").fill("  jamie@example.com  ");
   await form.getByRole("button", { name: "Add person", exact: true }).click();
   await expect(form.getByLabel("Username or email")).toHaveValue("");
@@ -93,8 +106,13 @@ test("people lookup accepts username or email and receipt additions leave items 
   await inline.getByRole("button", { name: "Add to receipt" }).click();
   await expect(inline).toHaveCount(0);
   await expect(page.locator('button[aria-pressed="true"]')).toHaveCount(0);
-  expect(bodies).toEqual([{ username: "missing" }, { username: "sam" },
-    { email: "jamie@example.com" }, { displayName: "Taylor" }, { username: "alex" }]);
+  expect(bodies).toEqual([
+    { username: "missing" },
+    { username: "sam" },
+    { email: "jamie@example.com" },
+    { displayName: "Taylor" },
+    { username: "alex" },
+  ]);
 });
 function receipt(
   status: "DRAFT" | "FINALIZED" | "SETTLED" = "FINALIZED",
@@ -160,12 +178,11 @@ async function signedIn(
   await page.route("**/api/**", async (route) => {
     const request = route.request(),
       url = new URL(request.url());
-    if (url.pathname === "/api/session")
+    if (url.pathname === "/api/auth/guest")
       return route.fulfill({
         json: {
           accessToken: "balances-access",
-          refreshToken: "",
-          browserSession: true,
+          refreshToken: "balances-refresh",
           expiresIn: 900,
           user: account(userId),
         },
@@ -180,6 +197,7 @@ async function signedIn(
     return handler(url.pathname, request.method(), route);
   });
   await page.goto("http://localhost:5173");
+  await expect(page.locator(".top-profile")).toBeVisible();
 }
 
 test("gross balances remain separate across currencies; settlement records all incoming payments only", async ({
@@ -402,19 +420,37 @@ test("individual receipt payments use participant record IDs and lock paid recei
   ]);
   expect(balanceReads).toBe(2);
   expect(listReads).toBeGreaterThanOrEqual(3);
-  await page.getByRole("button", { name: "Unsettle receipt", exact: true }).click();
-  await page.getByRole("dialog", { name: "Unsettle receipt?" })
-    .getByRole("button", { name: "Cancel", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Unsettle receipt", exact: true })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Unsettle receipt?" })
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
   expect(writes).toHaveLength(2);
-  await page.getByRole("button", { name: "Unsettle receipt", exact: true }).click();
-  await page.getByRole("dialog", { name: "Unsettle receipt?" })
-    .getByRole("button", { name: "Unsettle receipt", exact: true }).click();
-  await expect(page.locator(".receipt-payments .payment-status.unpaid")).toHaveCount(2);
-  await expect(page.locator(".receipt-payments .payment-status.paid")).toHaveCount(2);
+  await page
+    .getByRole("button", { name: "Unsettle receipt", exact: true })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Unsettle receipt?" })
+    .getByRole("button", { name: "Unsettle receipt", exact: true })
+    .click();
+  await expect(
+    page.locator(".receipt-payments .payment-status.unpaid"),
+  ).toHaveCount(2);
+  await expect(
+    page.locator(".receipt-payments .payment-status.paid"),
+  ).toHaveCount(2);
   await expect(bob).toContainText("$10.00");
-  await expect(page.getByRole("button", { name: "Reopen", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Delete receipt", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Unsettle receipt", exact: true })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Reopen", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Delete receipt", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Unsettle receipt", exact: true }),
+  ).toHaveCount(0);
   expect(writes.at(-1)).toBe("/api/receipts/101/unsettle");
   expect(balanceReads).toBe(3);
 });
@@ -483,10 +519,7 @@ test("participant sees original shares and payment status with no settlement con
       if (method !== "GET") writes++;
       if (path.endsWith("/friends")) return route.fulfill({ json: [] });
       return route.fulfill({
-        json:
-          path === "/api/receipts"
-            ? [namedReceipt]
-            : namedReceipt,
+        json: path === "/api/receipts" ? [namedReceipt] : namedReceipt,
       });
     },
     2,
@@ -534,4 +567,3 @@ test("draft shares are labeled Draft and never enable a payment action", async (
     page.getByRole("heading", { name: "No outstanding balances" }),
   ).toBeVisible();
 });
-

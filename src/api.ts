@@ -141,8 +141,8 @@ export class ApiError extends Error {
     super(message);
   }
 }
-// The same-origin gateway keeps persistent refresh credentials out of JavaScript.
-const base = "";
+// Production calls the backend directly; local development uses the Vite proxy.
+const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
 async function request<T>(
   path: string,
   method = "GET",
@@ -159,10 +159,9 @@ async function request<T>(
   try {
     response = await fetch(`${base}/api${path}`, {
       method,
-      credentials: "same-origin",
+      credentials: "omit",
       signal: session.signal(),
       headers: {
-        "X-SplitShare-Request": "1",
         ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
         ...(sentToken ? { Authorization: `Bearer ${sentToken}` } : {}),
       },
@@ -209,14 +208,32 @@ function refreshSession() {
     request<Credentials>(
       "/auth/refresh",
       "POST",
-      token === "cookie" ? undefined : { refreshToken: token },
+      { refreshToken: token },
       false,
     ),
   );
 }
 export const auth = {
-  restore: () =>
-    request<Credentials | undefined>("/session", "GET", undefined, false),
+  restore: async () => {
+    const refreshToken = session.storedRefreshToken();
+    if (!refreshToken) return undefined;
+    try {
+      return await session.restore((token) =>
+        request<Credentials>(
+          "/auth/refresh",
+          "POST",
+          { refreshToken: token },
+          false,
+        ),
+      );
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        session.set(null);
+        return undefined;
+      }
+      throw error;
+    }
+  },
   guest: () => request<Credentials>("/auth/guest", "POST", undefined, false),
   login: (body: unknown) =>
     request<Credentials>("/auth/login", "POST", body, false),
@@ -272,8 +289,13 @@ export const remoteApi = {
     const value = identifier.trim();
     const name = displayName.trim();
     if (!value && !name) throw new Error("Enter a username, email, or name.");
-    return request<Friend>(`/users/${id}/friends`, "POST",
-      value ? (value.includes("@") ? { email: value } : { username: value })
+    return request<Friend>(
+      `/users/${id}/friends`,
+      "POST",
+      value
+        ? value.includes("@")
+          ? { email: value }
+          : { username: value }
         : { displayName: name },
     );
   },
